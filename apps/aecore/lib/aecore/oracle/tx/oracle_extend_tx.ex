@@ -42,13 +42,8 @@ defmodule Aecore.Oracle.Tx.OracleExtendTx do
     %OracleExtendTx{ttl: ttl}
   end
 
-  @doc """
-  Validates the transaction without considering state
-  """
   @spec validate(OracleExtendTx.t(), DataTx.t()) :: :ok | {:error, reason()}
-  def validate(%OracleExtendTx{ttl: ttl}, data_tx) do
-    senders = DataTx.senders(data_tx)
-
+  def validate(%OracleExtendTx{ttl: ttl}, %DataTx{senders: senders}) do
     cond do
       ttl <= 0 ->
         {:error, "#{__MODULE__}: Negative ttl: #{inspect(ttl)} in OracleExtendTx"}
@@ -75,13 +70,12 @@ defmodule Aecore.Oracle.Tx.OracleExtendTx do
         accounts,
         oracles,
         _block_height,
-        %OracleExtendTx{} = tx,
-        data_tx
+        %OracleExtendTx{ttl: %{ttl: ttl}},
+        %DataTx{senders: [%Identifier{value: sender}]}
       ) do
-    sender = DataTx.main_sender(data_tx)
     registered_oracle = OracleStateTree.get_oracle(oracles, sender)
 
-    updated_registered_oracle = Map.update!(registered_oracle, :expires, &(&1 + tx.ttl.ttl))
+    updated_registered_oracle = Map.update!(registered_oracle, :expires, &(&1 + ttl))
     updated_oracle_state = OracleStateTree.enter_oracle(oracles, updated_registered_oracle)
 
     {:ok, {accounts, updated_oracle_state}}
@@ -97,16 +91,10 @@ defmodule Aecore.Oracle.Tx.OracleExtendTx do
           OracleExtendTx.t(),
           DataTx.t()
         ) :: :ok | {:error, reason()}
-  def preprocess_check(
-        accounts,
-        oracles,
-        _block_height,
-        tx,
-        data_tx
-      ) do
-    sender = DataTx.main_sender(data_tx)
-    fee = DataTx.fee(data_tx)
-
+  def preprocess_check(accounts, oracles, _block_height, %OracleExtendTx{ttl: ttl}, %DataTx{
+        fee: fee,
+        senders: [%Identifier{value: sender}]
+      }) do
     cond do
       AccountStateTree.get(accounts, sender).balance - fee < 0 ->
         {:error, "#{__MODULE__}: Negative balance"}
@@ -114,7 +102,7 @@ defmodule Aecore.Oracle.Tx.OracleExtendTx do
       !OracleStateTree.exists_oracle?(oracles, sender) ->
         {:error, "#{__MODULE__}: Account - #{inspect(sender)}, isn't a registered operator"}
 
-      fee < calculate_minimum_fee(tx.ttl) ->
+      fee < calculate_minimum_fee(ttl) ->
         {:error, "#{__MODULE__}: Fee: #{inspect(fee)} is too low"}
 
       true ->
@@ -129,7 +117,7 @@ defmodule Aecore.Oracle.Tx.OracleExtendTx do
           DataTx.t(),
           non_neg_integer()
         ) :: Chainstate.accounts()
-  def deduct_fee(accounts, block_height, _tx, data_tx, fee) do
+  def deduct_fee(accounts, block_height, _tx, %DataTx{} = data_tx, fee) do
     DataTx.standard_deduct_fee(accounts, block_height, data_tx, fee)
   end
 
@@ -141,17 +129,20 @@ defmodule Aecore.Oracle.Tx.OracleExtendTx do
   end
 
   @spec encode_to_list(OracleExtendTx.t(), DataTx.t()) :: list()
-  def encode_to_list(%OracleExtendTx{} = tx, %DataTx{} = datatx) do
-    [sender] = datatx.senders
-
+  def encode_to_list(%OracleExtendTx{ttl: %{ttl: extend_ttl_value} = extend_ttl}, %DataTx{
+        senders: [sender],
+        nonce: nonce,
+        fee: fee,
+        ttl: ttl
+      }) do
     [
       :binary.encode_unsigned(@version),
       Identifier.encode_to_binary(sender),
-      :binary.encode_unsigned(datatx.nonce),
-      Serialization.encode_ttl_type(tx.ttl),
-      :binary.encode_unsigned(tx.ttl.ttl),
-      :binary.encode_unsigned(datatx.fee),
-      :binary.encode_unsigned(datatx.ttl)
+      :binary.encode_unsigned(nonce),
+      Serialization.encode_ttl_type(extend_ttl),
+      :binary.encode_unsigned(extend_ttl_value),
+      :binary.encode_unsigned(fee),
+      :binary.encode_unsigned(ttl)
     ]
   end
 

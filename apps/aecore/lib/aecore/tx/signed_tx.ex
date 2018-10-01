@@ -5,9 +5,8 @@ defmodule Aecore.Tx.SignedTx do
 
   alias Aecore.Tx.SignedTx
   alias Aecore.Tx.DataTx
-  alias Aecore.Tx.SignedTx
   alias Aeutil.Serialization
-  alias Aecore.Chain.Chainstate
+  alias Aecore.Chain.{Chainstate, Identifier}
   alias Aecore.Account.Account
   alias Aecore.Keys
   alias Aeutil.Bits
@@ -32,26 +31,12 @@ defmodule Aecore.Tx.SignedTx do
     %SignedTx{data: data, signatures: signatures}
   end
 
-  def data_tx(%SignedTx{data: data}) do
-    data
-  end
-
-  @doc """
-  Validates the transaction without considering state
-  """
   @spec validate(SignedTx.t()) :: :ok | {:error, String.t()}
-  def validate(%SignedTx{data: data} = tx) do
-    if DataTx.chainstate_senders?(data) || signatures_valid?(tx, DataTx.senders(data)) do
-      DataTx.validate(data)
-    else
-      {:error, "#{__MODULE__}: Signatures invalid"}
-    end
-  end
+  def validate(%SignedTx{data: %DataTx{senders: data_senders} = data} = tx) do
+    pubkeys = for %Identifier{value: pubkey} <- data_senders, do: pubkey
 
-  @spec validate(SignedTx.t(), non_neg_integer()) :: :ok | {:error, String.t()}
-  def validate(%SignedTx{data: data} = tx, block_height) do
-    if DataTx.chainstate_senders?(data) || signatures_valid?(tx, DataTx.senders(data)) do
-      DataTx.validate(data, block_height)
+    if DataTx.chainstate_senders?(data) || signatures_valid?(tx, pubkeys) do
+      DataTx.validate(data)
     else
       {:error, "#{__MODULE__}: Signatures invalid"}
     end
@@ -60,16 +45,15 @@ defmodule Aecore.Tx.SignedTx do
   @spec process_chainstate(Chainstate.t(), non_neg_integer(), SignedTx.t()) ::
           {:ok, Chainstate.t()} | {:error, String.t()}
   def process_chainstate(chainstate, block_height, %SignedTx{data: data} = tx) do
-    if DataTx.chainstate_senders?(data) &&
-         !signatures_valid?(tx, DataTx.senders_from_chainstate(data, chainstate)) do
-      {:error, "#{__MODULE__}: Signatures invalid"}
+    with true <- signatures_valid?(tx, DataTx.senders(data, chainstate)),
+         :ok <- DataTx.preprocess_check(chainstate, block_height, data) do
+      DataTx.process_chainstate(chainstate, block_height, data)
     else
-      with :ok <- DataTx.preprocess_check(chainstate, block_height, data) do
-        DataTx.process_chainstate(chainstate, block_height, data)
-      else
-        err ->
-          err
-      end
+      false ->
+        {:error, "#{__MODULE__}: Signatures invalid"}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -232,16 +216,12 @@ defmodule Aecore.Tx.SignedTx do
   def signature_valid_for?(%SignedTx{data: data, signatures: signatures}, pubkey) do
     data_binary = DataTx.rlp_encode(data)
 
-    if pubkey not in DataTx.senders(data) do
-      false
-    else
-      case single_signature_check(signatures, data_binary, pubkey) do
-        {:ok, _} ->
-          true
+    case single_signature_check(signatures, data_binary, pubkey) do
+      {:ok, _} ->
+        true
 
-        :error ->
-          false
-      end
+      :error ->
+        false
     end
   end
 
@@ -305,15 +285,26 @@ defmodule Aecore.Tx.SignedTx do
     ]
   end
 
+  # Consider making a ListUtils module
+  @spec is_sorted?(list(binary)) :: boolean()
+  defp is_sorted?([]), do: true
+  defp is_sorted?([sig]) when is_binary(sig), do: true
+
+  defp is_sorted?([sig1, sig2 | rest]) when is_binary(sig1) and is_binary(sig2) do
+    sig1 < sig2 and is_sorted?([sig2 | rest])
+  end
+
   @spec decode_from_list(non_neg_integer(), list()) :: {:ok, SignedTx.t()} | {:error, String.t()}
   def decode_from_list(@version, [signatures, data]) do
-    case DataTx.rlp_decode(data) do
-      {:ok, data} ->
-        # make sure that the sigs are sorted - we cannot trust user input ;)
-        {:ok, %SignedTx{data: data, signatures: Enum.sort(signatures)}}
-
+    with {:ok, data} <- DataTx.rlp_decode(data),
+         true <- is_sorted?(signatures) do
+      {:ok, %SignedTx{data: data, signatures: signatures}}
+    else
       {:error, _} = error ->
         error
+
+      false ->
+        {:error, "#{__MODULE__}: Signatures are not sorted"}
     end
   end
 
