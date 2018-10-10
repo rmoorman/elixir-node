@@ -5,8 +5,9 @@ defmodule Aecore.Channel.Tx.ChannelSettleTx do
 
   use Aecore.Tx.Transaction
 
+  alias Aecore.Governance.GovernanceConstants
   alias Aecore.Channel.Tx.ChannelSettleTx
-  alias Aecore.Tx.{SignedTx, DataTx}
+  alias Aecore.Tx.DataTx
   alias Aecore.Account.{Account, AccountStateTree}
   alias Aecore.Chain.Chainstate
   alias Aecore.Channel.{ChannelStateOnChain, ChannelStateTree}
@@ -68,7 +69,7 @@ defmodule Aecore.Channel.Tx.ChannelSettleTx do
   @spec validate(ChannelSettleTx.t(), DataTx.t()) :: :ok | {:error, reason()}
   def validate(%ChannelSettleTx{}, %DataTx{senders: senders}) do
     if length(senders) != 1 do
-      {:error, "#{__MODULE__}: Invalid from_accs size"}
+      {:error, "#{__MODULE__}: Invalid senders size #{length(senders)}"}
     else
       :ok
     end
@@ -136,7 +137,7 @@ defmodule Aecore.Channel.Tx.ChannelSettleTx do
 
     cond do
       AccountStateTree.get(accounts, sender).balance < fee ->
-        {:error, "#{__MODULE__}: Negative sender balance"}
+        {:error, "#{__MODULE__}: Sender balance too low to cover fee"}
 
       channel == :none ->
         {:error, "#{__MODULE__}: Channel doesn't exist (already closed?)"}
@@ -145,10 +146,16 @@ defmodule Aecore.Channel.Tx.ChannelSettleTx do
         {:error, "#{__MODULE__}: Channel isn't settled"}
 
       channel.initiator_amount != initiator_amount ->
-        {:error, "#{__MODULE__}: Wrong initiator amount"}
+        {:error,
+         "#{__MODULE__}: Wrong initiator amount, expected #{channel.initiator_amount}, got #{
+           initiator_amount
+         }"}
 
       channel.responder_amount != responder_amount ->
-        {:error, "#{__MODULE__}: Wrong responder amount"}
+        {:error,
+         "#{__MODULE__}: Wrong responder amount, expected #{channel.responder_amount}, got #{
+           responder_amount
+         }"}
 
       true ->
         :ok
@@ -166,9 +173,9 @@ defmodule Aecore.Channel.Tx.ChannelSettleTx do
     DataTx.standard_deduct_fee(accounts, block_height, data_tx, fee)
   end
 
-  @spec is_minimum_fee_met?(SignedTx.t()) :: boolean()
-  def is_minimum_fee_met?(%SignedTx{data: %DataTx{fee: fee}}) do
-    fee >= Application.get_env(:aecore, :tx_data)[:minimum_fee]
+  @spec is_minimum_fee_met?(DataTx.t(), tx_type_state(), non_neg_integer()) :: boolean()
+  def is_minimum_fee_met?(%DataTx{fee: fee}, _chain_state, _block_height) do
+    fee >= GovernanceConstants.minimum_fee()
   end
 
   @spec encode_to_list(ChannelSettleTx.t(), DataTx.t()) :: list()

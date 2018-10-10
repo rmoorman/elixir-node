@@ -45,7 +45,7 @@ defmodule Aecore.Channel.ChannelStatePeer do
         }
 
   @typedoc "Reason for the error"
-  @type error :: {:error, binary()}
+  @type error :: {:error, String.t()}
 
   defstruct [
     :fsm_state,
@@ -125,7 +125,8 @@ defmodule Aecore.Channel.ChannelStatePeer do
 
       # check sequence
       tx_sequence <= cur_sequence ->
-        {:error, "#{__MODULE__}: Invalid sequence in tx"}
+        {:error,
+         "#{__MODULE__}: Old sequence. Expected bigger then #{cur_sequence}, got #{tx_sequence}"}
 
       true ->
         :ok
