@@ -337,42 +337,29 @@ defmodule Aecore.Account.Account do
     new_balance = balance + amount
 
     if new_balance < 0 do
-      throw({:error, "#{__MODULE__}: Negative balance"})
+      throw(
+        {:error,
+         "#{__MODULE__}: Insufficient funds. We have #{account_state.balance} and we tried to transfer #{
+           amount
+         }"}
+      )
     end
 
     %Account{account_state | balance: new_balance}
   end
 
-  @doc """
-  Adds balance to the given Account state. No exception version.
-  """
-  @spec apply_transfer(Account.t(), non_neg_integer(), integer()) :: {:ok, Account.t()} | error()
-  def apply_transfer(account_state, _block_height, amount) do
-    new_balance = account_state.balance + amount
-
-    if new_balance >= 0 do
-      {:ok, %Account{account_state | balance: new_balance}}
-    else
-      {:error, "#{__MODULE__}: Negative balance"}
-    end
-  end
-
   @spec apply_nonce!(Account.t(), integer()) :: Account.t()
   def apply_nonce!(%Account{nonce: current_nonce} = account_state, new_nonce) do
     if current_nonce >= new_nonce do
-      throw({:error, "#{__MODULE__}: Invalid nonce"})
+      throw(
+        {:error,
+         "#{__MODULE__}: Nonce is too small - currently we have #{current_nonce} and we got #{
+           new_nonce
+         }"}
+      )
     end
 
     %Account{account_state | nonce: new_nonce}
-  end
-
-  @spec apply_nonce(Account.t(), integer()) :: {:ok, Account.t()} | error()
-  def apply_nonce(%Account{nonce: current_nonce} = account_state, new_nonce) do
-    if current_nonce < new_nonce do
-      {:ok, %Account{account_state | nonce: new_nonce}}
-    else
-      {:error, "#{__MODULE__}: Invalid nonce"}
-    end
   end
 
   @spec base58c_encode(Keys.pubkey()) :: nil | String.t()
